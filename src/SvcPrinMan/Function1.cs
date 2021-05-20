@@ -234,6 +234,74 @@ namespace SvcPrinMan
         }
 
 
+        [FunctionName("CreatePasswordCredentialForApp")]
+        public static async Task<IActionResult> CreatePasswordForAppAsync(
+           [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
+           ILogger log)
+        {
+            var responseMessage = string.Empty;
+            var objectId = req.Query["id"];
+            log.LogInformation("CreatePasswordCredentialForApp function processed a request.");
+
+            if (!string.IsNullOrWhiteSpace(objectId))
+            {
+                var gc = await GetGraphClientAsync();
+                var results = new List<string>();
+                try
+                {
+                    var passCred = new PasswordCredential
+                    {
+                        DisplayName = $"Password Created on {DateTime.Now.ToShortDateString()}",
+                        Hint = "Automatically generated password without hint"
+                    };
+
+                    passCred = await gc.Applications[objectId].AddPassword(passCred).Request().PostAsync();
+                    results.Add(GetStringRepresentation(passCred));
+                    responseMessage = string.Join($"{Environment.NewLine}", results);
+                }
+                catch (Exception ex)
+                {
+                    responseMessage = ex.Message;
+                }
+            }
+            return new OkObjectResult(responseMessage);
+        }
+
+
+        [FunctionName("CreatePasswordForServicePrincipal")]
+        public static async Task<IActionResult> CreatePasswordForServicePrincipalAsync(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
+            ILogger log)
+        {
+            var responseMessage = string.Empty;
+            var objectId = req.Query["id"];
+            log.LogInformation("CreatePasswordForServicePrincipal function processed a request.");
+
+            if (!string.IsNullOrWhiteSpace(objectId))
+            {
+                var gc = await GetGraphClientAsync();
+                var results = new List<string>();
+                try
+                {
+                    var passCred = new PasswordCredential
+                    {
+                        DisplayName = $"Password Created on {DateTime.Now.ToShortDateString()}",
+                        Hint = "Automatically generated password without hint"
+                    };
+
+                    passCred = await gc.ServicePrincipals[objectId].AddPassword(passCred).Request().PostAsync();
+                    results.Add(GetStringRepresentation(passCred));
+                    responseMessage = string.Join($"{Environment.NewLine}", results);
+                }
+                catch (Exception ex)
+                {
+                    responseMessage = ex.Message;
+                }
+            }
+            return new OkObjectResult(responseMessage);
+        }
+
+
         [FunctionName("ListServicePrincipals")]
         public static async Task<IActionResult> ListServicePrincipalsAsync(
            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req,
@@ -398,6 +466,14 @@ namespace SvcPrinMan
                     sb.AppendLine($"\t > {creds.DisplayName}; Start Time: {creds.StartDateTime}; End Time: {creds.EndDateTime}");
                 }
             }
+            return sb.ToString();
+        }
+
+        private static string GetStringRepresentation(PasswordCredential passCred)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"{passCred.DisplayName} ({passCred.StartDateTime} - {passCred.EndDateTime})");
+            sb.AppendLine($"Password: {passCred.SecretText}");
             return sb.ToString();
         }
 
