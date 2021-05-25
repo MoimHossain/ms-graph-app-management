@@ -1,8 +1,8 @@
-@baseUri = https://SvcPrinManMHA.azurewebsites.net/api
+@baseUri = https://AZ_FUNC_NAME.azurewebsites.net/api
 @contentType = application/json
-@sampleAppId = b657a852-940d-48f1-a544-0a374c7224bc
-@sampleAppObjectId = 415cfe64-1303-43c8-a4a7-731ae0d5d23a
-@sampleSPObjectId = c3f9d1e5-49b0-40d2-9c4f-fe6f8b10006a
+@sampleAppId = 81283b9c-0d85-436c-94ce-3156b0d885bb
+@sampleAppObjectId = ea66cb30-f6a9-443f-b18b-cdca6bb980b8
+@sampleSPObjectId = f82049a3-f071-4530-a8a2-576ffcefd600
 @userObjectId = 9c5918c7-ef03-4059-a49e-aa6e6d761423
 # Example requests starts below
 
@@ -12,13 +12,17 @@
 GET {{baseUri}}/applications HTTP/1.1
 Content-Type: {{contentType}}
 
+### 
+GET {{baseUri}}/applications/app-ids/{{sampleAppId}} HTTP/1.1
+Content-Type: {{contentType}}
+
 ###
 POST {{baseUri}}/applications HTTP/1.1
 Content-Type: application/json
 
 {
-    "Description": "Venus-Automated-01",
-    "DisplayName": "Venus-Automated-01",
+    "Description": "Venus-X",
+    "DisplayName": "Venus-X",
     "Tags": ["Venus", "Automated"]
 }
 
@@ -28,14 +32,14 @@ POST {{baseUri}}/applications/{{sampleAppObjectId}}/password-credentials HTTP/1.
 Content-Type: application/json
 
 {
-    "DisplayName": "NextMonthPassword",
+    "DisplayName": "CurrentPassword",
     "Hint": "This is my smart hint!",
-    "StartDateTime": "6/21/2021 9:22:53 AM +00:00",
+    "StartDateTime": "5/25/2021 8:00:00 AM +00:00",
     "EndDateTime": "7/21/2021 9:22:53 AM +00:00"
 }
 
 ###
-DELETE  {{baseUri}}/applications/{{sampleAppObjectId}}/password-credentials/62b6a46c-0e19-4c05-b96c-d02be8081f88 HTTP/1.1
+DELETE  {{baseUri}}/applications/{{sampleAppObjectId}}/password-credentials/66a4ae18-bca5-4c19-ab35-f2d6a07e7dc1 HTTP/1.1
 
 ### 
 GET {{baseUri}}/applications/{{sampleAppObjectId}} HTTP/1.1
@@ -75,7 +79,7 @@ POST {{baseUri}}/service-principals HTTP/1.1
 Content-Type: application/json
 
 {
-    "Description": "Venus-Automated-ServicePrincipal-02",
+    "Description": "Venus-X-ServicePrincipal",
     "AppId": "{{sampleAppId}}",
     "Tags": ["Venus", "Automated", "ServicePrincipal"]
 }

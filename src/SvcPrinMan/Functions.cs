@@ -1,4 +1,5 @@
-using Azure.Identity;
+
+
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -6,9 +7,10 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using SvcPrinMan.Payloads;
+using SvcPrinMan.Services;
 using System;
 using System.Collections.Generic;
-using System.Net.Http.Headers;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -16,6 +18,85 @@ namespace SvcPrinMan
 {
     public static class Funcs
     {
+        [FunctionName("RotateCredentailsIfRequiredAsync")]
+        public static async Task<IActionResult> RotateCredentailsIfRequiredAsync(
+           [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "rotate")] CredentialRotatePayload payload,
+           ILogger log)
+        {
+            log.LogInformation("RotateCredentailsIfRequiredAsync function processed a request.");
+            var executionLogs = new StringBuilder();
+            const string AZURERM_TYPE = "azurerm";
+            const string SPN_KEY = "spnKey";
+            if (payload != null && !string.IsNullOrWhiteSpace(payload.OrgName)
+                && !string.IsNullOrWhiteSpace(payload.PAT))
+            {
+                var azdo = new AzDoService(payload.OrgName, payload.PAT);
+                var endpointIds = new List<Guid>();
+                if(payload.RotateAllServiceConnections)
+                {
+                    var allEndpoints = await azdo.ListServiceEndpointsAsync(payload.ProjectId);
+                    endpointIds.AddRange(allEndpoints.Value
+                        .Where(e => AZURERM_TYPE.Equals(e.Type))
+                        .Select(e => e.Id));
+                }
+                else if (payload.ServiceEndpoints != null && payload.ServiceEndpoints.Any())
+                {
+                    endpointIds.AddRange(payload.ServiceEndpoints);
+                }
+
+                foreach(var endpointId in endpointIds)
+                {
+                    var endpoint = await azdo.GetServiceEndpointsAsync(payload.ProjectId, endpointId);
+                    if (endpoint != null && AZURERM_TYPE.Equals(endpoint.Type)
+                        && endpoint.Authorization != null && endpoint.Authorization.Parameters != null
+                        && SPN_KEY.Equals(endpoint.Authorization.Parameters.AuthenticationType))
+                    {
+                        executionLogs.AppendLine($"Endpoint {endpoint.Name}({endpoint.Id}) loaded for credentials check.");
+                        var graph = await MSGraph.GetGraphClientAsync();
+                        var apps = await graph.Applications.Request().Filter($"appId eq '{endpoint.Authorization.Parameters.Serviceprincipalid}'").GetAsync();
+                        if (apps != null && apps.Any())
+                        {                            
+                            var application = apps.First();
+                            executionLogs.AppendLine($"AppRegistration {application.DisplayName}({application.AppId}) found for {endpoint.Name}({endpoint.Id}).");
+                            if (application.PasswordCredentials.Any())
+                            {
+                                executionLogs.AppendLine($"Password Credentails found ({application.PasswordCredentials.Count()}).");
+
+                                var now = DateTimeOffset.UtcNow;
+                                var oldPassCred = application.PasswordCredentials.First();
+                                if(oldPassCred.EndDateTime.HasValue)
+                                {
+                                    var rotationRequired = (now.AddDays(payload.DaysBeforeExpire) > oldPassCred.EndDateTime);
+                                    executionLogs.AppendLine($"{now.AddDays(payload.DaysBeforeExpire)} > {oldPassCred.EndDateTime} = {rotationRequired}");
+                                    if (rotationRequired)
+                                    {
+                                        var newPassCred = await graph.Applications[application.Id]
+                                          .AddPassword(new PasswordCredential
+                                          {
+                                              DisplayName = $"AutoGen: {now}",
+                                              Hint = $"AutoGen: {now}",
+                                              StartDateTime = now,
+                                              EndDateTime = now.AddDays(payload.LifeTimeInDays)
+                                          })
+                                          .Request().PostAsync();
+
+                                        endpoint.Authorization.Parameters.Serviceprincipalkey = newPassCred.SecretText;
+                                        endpoint = await azdo.UpdateServiceEndpointsAsync(payload.ProjectId, endpoint.Id, endpoint);
+
+                                        await graph
+                                            .Applications[application.Id]
+                                            .RemovePassword(oldPassCred.KeyId.Value)
+                                            .Request().PostAsync();
+                                        executionLogs.AppendLine($"App ({application.DisplayName}) password credentail ({oldPassCred.KeyId.Value}) deleted successfully");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return new OkObjectResult(executionLogs.ToString());
+        }
 
         [FunctionName("ListAppsAsync")]
         public static async Task<IActionResult> ListAppsAsync(
@@ -23,7 +104,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("ListAppsAsync function processed a request.");            
-            return new OkObjectResult(await GraphService.ListAppsAsync());
+            return new OkObjectResult(await MSGraph.ListAppsAsync());
         }
 
 
@@ -34,9 +115,18 @@ namespace SvcPrinMan
            ILogger log)
         {   
             log.LogInformation("GetApp function processed a request.");            
-            return new OkObjectResult(await GraphService.GetAppAsync(objectId));
+            return new OkObjectResult(await MSGraph.GetAppAsync(objectId));
         }
 
+        [FunctionName("ListAppsByAppIdAsync")]
+        public static async Task<IActionResult> ListAppsByAppIdAsync(
+           [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "applications/app-ids/{appId:guid}")] HttpRequest req,
+           Guid appId,
+           ILogger log)
+        {
+            log.LogInformation("ListServicePrinciListAppsByAppIdAsyncpalsByAppIdAsync function processed a request.");
+            return new OkObjectResult(await MSGraph.ListAppsByAppIdAsync(appId));
+        }
 
         [FunctionName("CreateAppAsync")]
         public static async Task<IActionResult> CreateAppAsync(
@@ -44,7 +134,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("CreateAppAsync function processed a request.");
-            return new OkObjectResult(await GraphService.CreateAppAsync(payload));
+            return new OkObjectResult(await MSGraph.CreateAppAsync(payload));
         }
 
         [FunctionName("CreatePasswordForAppAsync")]
@@ -54,7 +144,7 @@ namespace SvcPrinMan
            ILogger log)
         {            
             log.LogInformation("CreatePasswordForAppAsync function processed a request.");            
-            return new OkObjectResult(await GraphService.CreatePasswordForAppAsync(objectId, passCred));
+            return new OkObjectResult(await MSGraph.CreatePasswordForAppAsync(objectId, passCred));
         }
 
         [FunctionName("DeleteAppPasswordCredentialsAsync")]
@@ -65,7 +155,7 @@ namespace SvcPrinMan
            ILogger log)
         {            
             log.LogInformation("DeleteAppPasswordCredentialsAsync function processed a request.");            
-            return new OkObjectResult(await GraphService.DeleteAppPasswordCredentialsAsync(objectId, keyId));
+            return new OkObjectResult(await MSGraph.DeleteAppPasswordCredentialsAsync(objectId, keyId));
         }
 
 
@@ -77,7 +167,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("AddOwnersToAppAsync function processed a request.");
-            return new OkObjectResult(await GraphService.AddOwnerToAppAsync(objectId, ownerObjectId));
+            return new OkObjectResult(await MSGraph.AddOwnerToAppAsync(objectId, ownerObjectId));
         }
 
         [FunctionName("DeleteOwnerFromAppAsync")]
@@ -88,7 +178,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("DeleteOwnerFromAppAsync function processed a request.");
-            return new OkObjectResult(await GraphService.DeleteOwnerFromAppAsync(objectId, ownerObjectId));
+            return new OkObjectResult(await MSGraph.DeleteOwnerFromAppAsync(objectId, ownerObjectId));
         }
 
         [FunctionName("DeleteAppAsync")]
@@ -98,7 +188,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("DeleteAppAsync function processed a request.");            
-            return new OkObjectResult(await GraphService.DeleteAppAsync(objectId));
+            return new OkObjectResult(await MSGraph.DeleteAppAsync(objectId));
         }
 
         [FunctionName("ListServicePrincipalsAsync")]
@@ -107,7 +197,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("ListServicePrincipalsAsync function processed a request.");
-            return new OkObjectResult(await GraphService.ListServicePrincipalsAsync());
+            return new OkObjectResult(await MSGraph.ListServicePrincipalsAsync());
         }
 
         [FunctionName("GetServicePrincipalsByIdAsync")]
@@ -117,7 +207,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("GetServicePrincipalsByIdAsync function processed a request.");
-            return new OkObjectResult(await GraphService.GetServicePrincipalsByIdAsync(objectId));
+            return new OkObjectResult(await MSGraph.GetServicePrincipalsByIdAsync(objectId));
         }
 
         [FunctionName("ListServicePrincipalsByAppIdAsync")]
@@ -127,7 +217,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("ListServicePrincipalsByAppIdAsync function processed a request.");
-            return new OkObjectResult(await GraphService.ListServicePrincipalsByAppIdAsync(appId));
+            return new OkObjectResult(await MSGraph.ListServicePrincipalsByAppIdAsync(appId));
         }
 
         [FunctionName("CreateServicePrincipalAsync")]
@@ -136,7 +226,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("CreateServicePrincipalAsync function processed a request.");
-            return new OkObjectResult(await GraphService.CreateServicePrincipalAsync(payload));
+            return new OkObjectResult(await MSGraph.CreateServicePrincipalAsync(payload));
         }
 
         [FunctionName("CreatePasswordForServicePrincipalAsync")]
@@ -146,7 +236,7 @@ namespace SvcPrinMan
             ILogger log)
         {
             log.LogInformation("CreatePasswordForServicePrincipalAsync function processed a request.");
-            return new OkObjectResult(await GraphService.CreatePasswordForServicePrincipalAsync(objectId, passCred));
+            return new OkObjectResult(await MSGraph.CreatePasswordForServicePrincipalAsync(objectId, passCred));
         }
 
         [FunctionName("DeleteServicePrincipalPasswordCredentialsAsync")]
@@ -157,7 +247,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("DeleteServicePrincipalPasswordCredentialsAsync function processed a request.");
-            return new OkObjectResult(await GraphService.DeleteServicePrincipalPasswordCredentialsAsync(objectId, keyId));
+            return new OkObjectResult(await MSGraph.DeleteServicePrincipalPasswordCredentialsAsync(objectId, keyId));
         }
 
         [FunctionName("AddOwnerToServicePrincipalAsync")]
@@ -168,7 +258,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("AddOwnerToServicePrincipalAsync function processed a request.");
-            return new OkObjectResult(await GraphService.AddOwnerToServicePrincipalAsync(objectId, ownerObjectId));
+            return new OkObjectResult(await MSGraph.AddOwnerToServicePrincipalAsync(objectId, ownerObjectId));
         }
 
         [FunctionName("DeleteOwnerFromServicePrincipalAsync")]
@@ -179,7 +269,7 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("DeleteOwnerFromServicePrincipalAsync function processed a request.");
-            return new OkObjectResult(await GraphService.DeleteOwnerFromServicePrincipalAsync(objectId, ownerObjectId));
+            return new OkObjectResult(await MSGraph.DeleteOwnerFromServicePrincipalAsync(objectId, ownerObjectId));
         }
     }
 }

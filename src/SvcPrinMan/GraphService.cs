@@ -17,7 +17,7 @@ using System.Threading.Tasks;
 
 namespace SvcPrinMan
 {
-    public class GraphService
+    public class MSGraph
     {   
         public static async Task<string> ListAppsAsync()
         {
@@ -52,6 +52,27 @@ namespace SvcPrinMan
                 app.Owners = await graphServiceClient.Applications[objectId.ToString()]
                     .Owners.Request().GetAsync();
                 responseMessage = GraphPayloadFormatter.GetStringRepresentation(app);
+            }
+            catch (Exception ex)
+            {
+                responseMessage = ex.Message;
+            }
+            return responseMessage;
+        }
+
+        public static async Task<string> ListAppsByAppIdAsync(Guid appId)
+        {
+            string responseMessage;
+            try
+            {
+                var graphServiceClient = await GetGraphClientAsync();
+                var results = new List<string>();
+                var apps = await graphServiceClient.Applications.Request().Filter($"appId eq '{appId}'").GetAsync();
+                foreach (var app in apps)
+                {
+                    results.Add(GraphPayloadFormatter.GetStringRepresentation(app));
+                }
+                responseMessage = string.Join($"{Environment.NewLine}", results);
             }
             catch (Exception ex)
             {
@@ -356,7 +377,7 @@ namespace SvcPrinMan
             return responseMessage;
         }
 
-        private async static Task<GraphServiceClient> GetGraphClientAsync()
+        public async static Task<GraphServiceClient> GetGraphClientAsync()
         {
             // Create the Microsoft Graph service client
             // with a DefaultAzureCredential class, which gets an access token

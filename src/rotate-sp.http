@@ -1,0 +1,16 @@
+@baseUri = https://AZ_FUNC_NAME.azurewebsites.net/api
+@contentType = application/json
+
+###
+POST {{baseUri}}/rotate HTTP/1.1
+Content-Type: {{contentType}}
+
+{
+    "OrgName": "",
+    "PAT": "",
+    "ProjectId": "c335132d-ff5f-4371-ae28-ba7940f6eb92",
+    "RotateAllServiceConnections": false,
+    "ServiceEndpoints": ["a85edcc0-c1b6-4194-bb9e-fb165fc0dbcf"],
+    "DaysBeforeExpire": 1,
+    "LifeTimeInDays": 5
+}

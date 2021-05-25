@@ -1,5 +1,5 @@
 
-functionName="SvcPrinManMHA"
+functionName="Az_FUNC_NAME"
 echo "Retrieving the MSI ID for Function app: $functionName"
 msiObjectId=$(az resource list -n $functionName --query [*].identity.principalId --out tsv)
 echo "MSI Object ID: $msiObjectId"

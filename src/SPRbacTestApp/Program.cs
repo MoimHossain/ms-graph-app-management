@@ -3,24 +3,29 @@ using Microsoft.Azure.Management.ResourceManager.Fluent.Authentication;
 using System;
 using System.Linq;
 
+// TEST codes - Not needed.
 
-var clientId = "";
-var clientSecret = "";
-var tenantId = "";
-var subId = "";
+//if(true)
+//{
 
-var creds =  SdkContext.AzureCredentialsFactory
-    .FromServicePrincipal(
-        clientId, clientSecret, 
-        tenantId, AzureEnvironment.AzureGlobalCloud);
+//    var clientId = "";
+//    var clientSecret = "";
+//    var tenantId = "";
+//    var subId = "";
 
-var azure = ResourceManager
-    .Configure()
-    .Authenticate(creds)
-    .WithSubscription(subId);
+//    var creds = SdkContext.AzureCredentialsFactory
+//        .FromServicePrincipal(
+//            clientId, clientSecret,
+//            tenantId, AzureEnvironment.AzureGlobalCloud);
 
-var resources = await azure.ResourceGroups.ListAsync();
-var responseMessage = string.Join($"{Environment.NewLine}", resources.Select(r => r.Name).ToList());
+//    var azure = ResourceManager
+//        .Configure()
+//        .Authenticate(creds)
+//        .WithSubscription(subId);
 
-Console.WriteLine(responseMessage);
-Console.ReadKey();
+//    var resources = await azure.ResourceGroups.ListAsync();
+//    var responseMessage = string.Join($"{Environment.NewLine}", resources.Select(r => r.Name).ToList());
+
+//    Console.WriteLine(responseMessage);
+//    Console.ReadKey();
+//}
