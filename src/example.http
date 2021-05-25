@@ -1,4 +1,4 @@
-@baseUri = https://AZ_FUNCNAME.azurewebsites.net/api
+@baseUri = https://SvcPrinManMHA.azurewebsites.net/api
 @contentType = application/json
 @sampleAppId = b657a852-940d-48f1-a544-0a374c7224bc
 @sampleAppObjectId = 415cfe64-1303-43c8-a4a7-731ae0d5d23a

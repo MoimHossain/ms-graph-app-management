@@ -34,6 +34,9 @@ echo "Assigning role ('Application.ReadWrite.All') completed."
 
 
 
+# The following is not needed for service principal and app registration management.
+# It's only for testing the graph API connectivity - in production we don't need this.
+
 echo "Retrieving the MS Graph Role ID for 'User.Read.All' with Application Permission..."
 userReadRoleId=$(az ad sp list --display-name "Microsoft Graph" --query "[0].appRoles[?value=='User.Read.All' && contains(allowedMemberTypes, 'Application')].id" --output tsv)
 echo "Role ID: $userReadRoleId"
