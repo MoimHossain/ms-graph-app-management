@@ -1,4 +1,6 @@
-﻿using Microsoft.Azure.WebJobs;
+﻿
+using Microsoft.ApplicationInsights;
+using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
 using SvcPrinMan.Payloads;
 using System;
@@ -8,13 +10,21 @@ using System.Threading.Tasks;
 
 namespace SvcPrinMan
 {
-    public static class AzFuncs
+    public class AzFuncs
     {
+        private readonly TelemetryClient telemetryClient;
+
+        public AzFuncs(TelemetryClient telemetryClient)
+        {
+            this.telemetryClient = telemetryClient;
+        }
+
         [FunctionName("QueueTrigger")]
-        public static async Task QueueTrigger(
+        public async Task QueueTrigger(
         [QueueTrigger("inbox")] CredentialRotatePayload payload, ILogger log)
         {
-            await Funcs.RotateCredentailsIfRequiredAsync(payload, log);
+            var response = await SecretRotationOrchestrator.RotateSecretAsync(payload);
+            telemetryClient.TrackEvent("Secret Rotation completed", response.Item2);
         }
     }
 }

@@ -24,79 +24,11 @@ namespace SvcPrinMan
            ILogger log)
         {
             log.LogInformation("RotateCredentailsIfRequiredAsync function processed a request.");
-            var executionLogs = new StringBuilder();
-            const string AZURERM_TYPE = "azurerm";
-            const string SPN_KEY = "spnKey";
-            if (payload != null && !string.IsNullOrWhiteSpace(payload.OrgName)
-                && !string.IsNullOrWhiteSpace(payload.PAT))
-            {
-                var azdo = new AzDoService(payload.OrgName, payload.PAT);
-                var endpointIds = new List<Guid>();
-                if(payload.RotateAllServiceConnections)
-                {
-                    var allEndpoints = await azdo.ListServiceEndpointsAsync(payload.ProjectId);
-                    endpointIds.AddRange(allEndpoints.Value
-                        .Where(e => AZURERM_TYPE.Equals(e.Type))
-                        .Select(e => e.Id));
-                }
-                else if (payload.ServiceEndpoints != null && payload.ServiceEndpoints.Any())
-                {
-                    endpointIds.AddRange(payload.ServiceEndpoints);
-                }
-
-                foreach(var endpointId in endpointIds)
-                {
-                    var endpoint = await azdo.GetServiceEndpointsAsync(payload.ProjectId, endpointId);
-                    if (endpoint != null && AZURERM_TYPE.Equals(endpoint.Type)
-                        && endpoint.Authorization != null && endpoint.Authorization.Parameters != null
-                        && SPN_KEY.Equals(endpoint.Authorization.Parameters.AuthenticationType))
-                    {
-                        executionLogs.AppendLine($"Endpoint {endpoint.Name}({endpoint.Id}) loaded for credentials check.");
-                        var graph = await MSGraph.GetGraphClientAsync();
-                        var apps = await graph.Applications.Request().Filter($"appId eq '{endpoint.Authorization.Parameters.Serviceprincipalid}'").GetAsync();
-                        if (apps != null && apps.Any())
-                        {                            
-                            var application = apps.First();
-                            executionLogs.AppendLine($"AppRegistration {application.DisplayName}({application.AppId}) found for {endpoint.Name}({endpoint.Id}).");
-                            if (application.PasswordCredentials.Any())
-                            {
-                                executionLogs.AppendLine($"Password Credentails found ({application.PasswordCredentials.Count()}).");
-
-                                var now = DateTimeOffset.UtcNow;
-                                var oldPassCred = application.PasswordCredentials.First();
-                                if(oldPassCred.EndDateTime.HasValue)
-                                {
-                                    var rotationRequired = (now.AddDays(payload.DaysBeforeExpire) > oldPassCred.EndDateTime);
-                                    executionLogs.AppendLine($"{now.AddDays(payload.DaysBeforeExpire)} > {oldPassCred.EndDateTime} = {rotationRequired}");
-                                    if (rotationRequired)
-                                    {
-                                        var newPassCred = await graph.Applications[application.Id]
-                                          .AddPassword(new PasswordCredential
-                                          {
-                                              DisplayName = $"AutoGen: {now}",
-                                              Hint = $"AutoGen: {now}",
-                                              StartDateTime = now,
-                                              EndDateTime = now.AddDays(payload.LifeTimeInDays)
-                                          })
-                                          .Request().PostAsync();
-
-                                        endpoint.Authorization.Parameters.Serviceprincipalkey = newPassCred.SecretText;
-                                        endpoint = await azdo.UpdateServiceEndpointsAsync(payload.ProjectId, endpoint.Id, endpoint);
-
-                                        await graph
-                                            .Applications[application.Id]
-                                            .RemovePassword(oldPassCred.KeyId.Value)
-                                            .Request().PostAsync();
-                                        executionLogs.AppendLine($"App ({application.DisplayName}) password credentail ({oldPassCred.KeyId.Value}) deleted successfully");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            return new OkObjectResult(executionLogs.ToString());
+            var response = await SecretRotationOrchestrator.RotateSecretAsync(payload);
+            return new OkObjectResult(response.Item1);
         }
+
+        
 
         [FunctionName("ListAppsAsync")]
         public static async Task<IActionResult> ListAppsAsync(
