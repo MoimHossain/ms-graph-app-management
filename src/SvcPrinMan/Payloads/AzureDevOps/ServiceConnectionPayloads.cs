@@ -74,7 +74,10 @@ namespace SvcPrinMan.Payloads.AzureDevOps
         public Guid Tenantid { get; set; }
 
         [JsonPropertyName("serviceprincipalkey")]
-        public object Serviceprincipalkey { get; set; }
+        public string Serviceprincipalkey { get; set; }
+
+        [JsonPropertyName("servicePrincipalCertificate")]
+        public string ServicePrincipalCertificate { get; set; }
     }
 
     public partial class VstsCreatedBy

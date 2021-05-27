@@ -3,6 +3,7 @@
 using Microsoft.Graph;
 using SvcPrinMan.Payloads;
 using SvcPrinMan.Services;
+using SvcPrinMan.Supports;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,12 +14,13 @@ namespace SvcPrinMan
 {
     public class SecretRotationOrchestrator
     {
+        private const string AZURERM_TYPE = "azurerm";
+        private const string SPN_KEY = "spnKey";
+        private const string SPN_CERTIFICATE = "spnCertificate";
+
         public static async Task<Tuple<string, Dictionary<string, string>>> RotateSecretAsync(
             CredentialRotatePayload payload)
         {
-            const string AZURERM_TYPE = "azurerm";
-            const string SPN_KEY = "spnKey";
-
             var executionLogs = new StringBuilder();
             var context = new Dictionary<string, string>();
 
@@ -29,11 +31,10 @@ namespace SvcPrinMan
                 context.Add("Organization Name", payload.OrgName);
                 context.Add("Project Id", payload.ProjectId.ToString());
 
-                var endpointIds = await CollectEndpointsAsync(payload, AZURERM_TYPE, azdo);
+                var endpointIds = await CollectEndpointsAsync(payload, azdo);
                 foreach (var endpointId in endpointIds)
                 {
-                    await ProcessEndpointAsync(payload, AZURERM_TYPE, SPN_KEY,
-                        executionLogs, context, azdo, endpointId);
+                    await ProcessEndpointAsync(payload, executionLogs, context, azdo, endpointId);
                 }
             }
             return new Tuple<string, Dictionary<string, string>>(executionLogs.ToString(), context);
@@ -41,7 +42,6 @@ namespace SvcPrinMan
 
         private static async Task<List<Guid>> CollectEndpointsAsync(
             CredentialRotatePayload payload, 
-            string AZURERM_TYPE, 
             AzDoService azdo)
         {
             var endpointIds = new List<Guid>();
@@ -62,8 +62,6 @@ namespace SvcPrinMan
 
         private static async Task ProcessEndpointAsync(
             CredentialRotatePayload payload, 
-            string AZURERM_TYPE, 
-            string SPN_KEY, 
             StringBuilder executionLogs, 
             Dictionary<string, string> context, 
             AzDoService azdo, 
@@ -71,23 +69,99 @@ namespace SvcPrinMan
         {
             var endpoint = await azdo.GetServiceEndpointsAsync(payload.ProjectId, endpointId);
             if (endpoint != null && AZURERM_TYPE.Equals(endpoint.Type)
-                && endpoint.Authorization != null && endpoint.Authorization.Parameters != null
-                && SPN_KEY.Equals(endpoint.Authorization.Parameters.AuthenticationType))
+                && endpoint.Authorization != null && endpoint.Authorization.Parameters != null)
             {
-                executionLogs.AppendLine($"Endpoint {endpoint.Name}({endpoint.Id}) loaded for credentials check.");
-                context.Add("Endpoint Name", endpoint.Name);
-                context.Add("Endpoint Id", endpoint.Id.ToString());
-                var graph = await MSGraph.GetGraphClientAsync();
-                var apps = await graph.Applications.Request().Filter($"appId eq '{endpoint.Authorization.Parameters.Serviceprincipalid}'").GetAsync();
-                if (apps != null && apps.Any())
+                if(SPN_KEY.Equals(endpoint.Authorization.Parameters.AuthenticationType) ||
+                    SPN_CERTIFICATE.Equals(endpoint.Authorization.Parameters.AuthenticationType))
                 {
-                    var application = apps.First();
-                    await ProcessAppAsync(payload, executionLogs, context, azdo, endpoint, graph, application);
+                    executionLogs.AppendLine($"Endpoint {endpoint.Name}({endpoint.Id}) loaded for credentials check.");
+                    context.Add("Endpoint Name", endpoint.Name);
+                    context.Add("Endpoint Id", endpoint.Id.ToString());
+                    context.Add("Authentication Type", endpoint.Authorization.Parameters.AuthenticationType);
+                    var graph = await MSGraph.GetGraphClientAsync();
+                    var apps = await graph.Applications.Request().Filter($"appId eq '{endpoint.Authorization.Parameters.Serviceprincipalid}'").GetAsync();
+                    if (apps != null && apps.Any())
+                    {
+                        var application = apps.First();
+                        executionLogs.AppendLine($"AppRegistration {application.DisplayName}({application.AppId}) found for {endpoint.Name}({endpoint.Id}).");
+                        context.Add("App Name", application.DisplayName);
+                        context.Add("App Id", application.AppId.ToString());
+
+                        if (SPN_KEY.Equals(endpoint.Authorization.Parameters.AuthenticationType))
+                        {
+                            await ProcessAppWithPasswordCredentailsAsync(payload, executionLogs, context, azdo, endpoint, graph, application);
+                        }
+                        else
+                        {
+                            await ProcessAppWithCertificateCredentailsAsync(payload, executionLogs, context, azdo, endpoint, graph, application);
+                        }
+                    }
                 }
             }
         }
 
-        private static async Task ProcessAppAsync(
+        private static async Task ProcessAppWithCertificateCredentailsAsync(
+            CredentialRotatePayload payload,
+            StringBuilder executionLogs,
+            Dictionary<string, string> context,
+            AzDoService azdo,
+            Payloads.AzureDevOps.VstsServiceEndpoint endpoint,
+            GraphServiceClient graph,
+            Application application)
+        {
+            if (application.KeyCredentials.Any())
+            {
+                executionLogs.AppendLine($"Certificate Credentails found ({application.KeyCredentials.Count()}).");
+                context.Add("Total Credentails", application.KeyCredentials.Count().ToString());
+                var now = DateTimeOffset.UtcNow;
+                var oldCertificateCred = application.KeyCredentials.First();
+                if (oldCertificateCred.EndDateTime.HasValue)
+                {
+                    var rotationRequired = (now.AddDays(payload.DaysBeforeExpire) > oldCertificateCred.EndDateTime);
+                    executionLogs.AppendLine($"{now.AddDays(payload.DaysBeforeExpire)} > {oldCertificateCred.EndDateTime} = {rotationRequired}");
+                    if (rotationRequired)
+                    {
+                        await RotateCertificateCoreAsync(payload, executionLogs, context, azdo, endpoint, graph, application, now);
+                    }
+                }
+            }
+        }
+
+        private static async Task RotateCertificateCoreAsync(
+            CredentialRotatePayload payload,
+            StringBuilder executionLogs,
+            Dictionary<string, string> context,
+            AzDoService azdo,
+            Payloads.AzureDevOps.VstsServiceEndpoint endpoint,
+            GraphServiceClient graph,
+            Application application,
+            DateTimeOffset now)
+        {
+            var selfSignedCertificate = 
+                CertificateUtils.CreateSelfSignedCertificateAsync(validForDays: payload.LifeTimeInDays);
+            var certificateCredentail = new KeyCredential
+            {
+                StartDateTime = now,
+                EndDateTime = now.AddDays(payload.LifeTimeInDays),
+                Type = "AsymmetricX509Cert",
+                Usage = "Verify",
+                Key = CertificateUtils.GetPfxAsBytes(selfSignedCertificate)
+            };
+            var app = new Application
+            {
+                KeyCredentials = new List<KeyCredential> { certificateCredentail }
+            };
+            await graph.Applications[application.Id].Request().UpdateAsync(app);            
+            endpoint.Authorization.Parameters
+                .ServicePrincipalCertificate = CertificateUtils.GeneratePEMWithPrivateKeyAsString(selfSignedCertificate);
+            await azdo.UpdateServiceEndpointsAsync(payload.ProjectId, endpoint.Id, endpoint);
+            context.Add("Certificate Key Id", certificateCredentail.KeyId.ToString());
+            context.Add("Certificate Start Time", certificateCredentail.StartDateTime.ToString());
+            context.Add("Certificate End Time", certificateCredentail.EndDateTime.ToString());
+            context.Add("Certificate Thumbprint", selfSignedCertificate.Thumbprint);
+        }
+
+        private static async Task ProcessAppWithPasswordCredentailsAsync(
             CredentialRotatePayload payload, 
             StringBuilder executionLogs, 
             Dictionary<string, string> context, 
@@ -95,10 +169,7 @@ namespace SvcPrinMan
             Payloads.AzureDevOps.VstsServiceEndpoint endpoint, 
             GraphServiceClient graph, 
             Application application)
-        {
-            executionLogs.AppendLine($"AppRegistration {application.DisplayName}({application.AppId}) found for {endpoint.Name}({endpoint.Id}).");
-            context.Add("App Name", application.DisplayName);
-            context.Add("App Id", application.AppId.ToString());
+        { 
             if (application.PasswordCredentials.Any())
             {
                 executionLogs.AppendLine($"Password Credentails found ({application.PasswordCredentials.Count()}).");
@@ -111,13 +182,13 @@ namespace SvcPrinMan
                     executionLogs.AppendLine($"{now.AddDays(payload.DaysBeforeExpire)} > {oldPassCred.EndDateTime} = {rotationRequired}");
                     if (rotationRequired)
                     {
-                        await RotateCoreAsync(payload, executionLogs, context, azdo, endpoint, graph, application, now, oldPassCred);
+                        await RotatePasswordCoreAsync(payload, executionLogs, context, azdo, endpoint, graph, application, now, oldPassCred);
                     }
                 }
             }
         }
 
-        private static async Task RotateCoreAsync(
+        private static async Task RotatePasswordCoreAsync(
             CredentialRotatePayload payload, 
             StringBuilder executionLogs, 
             Dictionary<string, string> context, 
@@ -139,10 +210,10 @@ namespace SvcPrinMan
               .Request().PostAsync();
 
             endpoint.Authorization.Parameters.Serviceprincipalkey = newPassCred.SecretText;
-            endpoint = await azdo.UpdateServiceEndpointsAsync(payload.ProjectId, endpoint.Id, endpoint);
-            context.Add("New Secret Id", newPassCred.KeyId.ToString());
-            context.Add("New Secret Start Time", newPassCred.StartDateTime.ToString());
-            context.Add("New Secret End Time", newPassCred.EndDateTime.ToString());
+            await azdo.UpdateServiceEndpointsAsync(payload.ProjectId, endpoint.Id, endpoint);
+            context.Add("Secret Id", newPassCred.KeyId.ToString());
+            context.Add("Secret Start Time", newPassCred.StartDateTime.ToString());
+            context.Add("Secret End Time", newPassCred.EndDateTime.ToString());
             await graph
                 .Applications[application.Id]
                 .RemovePassword(oldPassCred.KeyId.Value)
