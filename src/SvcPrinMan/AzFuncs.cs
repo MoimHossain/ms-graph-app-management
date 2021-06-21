@@ -1,5 +1,4 @@
-﻿
-using Microsoft.ApplicationInsights;
+﻿using Microsoft.ApplicationInsights;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
 using SvcPrinMan.Payloads;
